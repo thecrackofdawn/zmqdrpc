@@ -3,7 +3,14 @@ import msgpack
 import uuid
 import threading
 import time
+import logging
 
+LOGGER = logging.getLogger("zmqdrpc-worker")
+LOGGER.setLevel("WARNING")
+_ = logging.StreamHandler()
+_.setLevel('WARNING')
+_.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+LOGGER.addHandler(_)
 
 class RegisterFunctions():
     def __init__(self):
