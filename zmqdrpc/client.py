@@ -6,6 +6,7 @@ import time
 import logging
 import contextlib
 import uuid
+from exceptions import *
 
 LOGGER = logging.getLogger("zmqdrpc-client")
 LOGGER.setLevel("WARNING")
@@ -25,13 +26,13 @@ class Replay():
         if self.poll():
             return self.value
         if self.timeoutAt <= now:
-            raise Exception("timeout")
+            raise Timeout("timeout")
         if self.event.wait(self.timeoutAt - now):
             if self.isException:
                 raise self.value
             return self.value
         else:
-            raise Exception("timeout")
+            raise Timeout("timeout")
 
     def __set(self, value, isException=False):
         self.isException = isException
@@ -58,19 +59,40 @@ def Timeout(client, timeout):
     finally:
         client._Client__timeout = orginTimeout
 
-class Client():
-    """
-    not threaded safe
-    """
-    def __init__(self, address, timeout=60):
-        self.__uid = uuid.uuid1().hex
+class Client(object):
+    def __init__(self, address, timeout=60, threadedSafe=True):
         self.__context = zmq.Context(1)
         self.__timeout = timeout
-        self.__address = address
-        self.__socket = self.__context.socket(zmq.REQ)
-        self.__socket.connect("tcp://%s:%s"%self.__address)
-        self.__poller = zmq.Poller()
-        self.__poller.register(self.__socket, zmq.POLLIN)
+        self.__address = tuple(address)
+        self.__threadedSafe = threadedSafe
+        if threadedSafe:
+            self.__tlocal = threading.local()
+        else:
+            class _:pass
+            self.__tlocal = _()
+
+    @property
+    def __socket(self):
+        if hasattr(self.__tlocal, "socket"):
+            return self.__tlocal.socket
+        else:
+            self.__tlocal.socket = self.__context.socket(zmq.REQ)
+            self.__tlocal.socket.connect("tcp://%s:%s"%self.__address)
+            if not hasattr(self.__tlocal, "poller"):
+                self.__tlocal.poller = zmq.Poller()
+            self.__tlocal.poller.register(self.__tlocal.socket, zmq.POLLIN)
+            return self.__tlocal.socket
+
+    @__socket.setter
+    def __socket(self, value):
+        self.__tlocal.socket = value
+
+    @property
+    def __poller(self):
+        if hasattr(self.__tlocal, "poller"):
+            return self.__tlocal.poller
+        else:
+            self.__tlocal.poller = zmq.Poller()
 
     def __onTimeout(self):
         self.__poller.unregister(self.__socket)
@@ -89,16 +111,13 @@ class Client():
             if len(frames) == 1:
                 msg = msgpack.unpackb(frames[0])
             else:
-                raise Exception("unknow format")
+                raise UnknownFormat("unknow format")
             if msg[0] == "replay":
                 return msg[2]
             elif msg[0] == "Exception":
-                try:
-                    raise getattr(exceptions, msg[2])(msg[3])
-                except AttributeError:
-                    raise Exception("exception %s is not found:%s"%(msg[2], msg[3]))
+                raise RemoteException("{0}--{1}".format(msg[2], msg[3]))
             else:
-                raise Exception("unknow message type")
+                raise UnknownMessageType("unknow message type")
         else:
             #if timeout we have to close the old one and create a new one
             #TODO:(cd)according to the zmq's doc, it's a bad behaviour to create and close lots of sockets
@@ -114,21 +133,35 @@ class Client():
     def __getattr__(self, name):
         return Call(name, self)
 
-class AsyncClient():
-    """
-    not threaded safe
-    """
-    def __init__(self, address, timeout=60):
+class AsyncClient(object):
+    def __init__(self, address, timeout=60, threadedSafe=True):
         self.__exitFlag = threading.Event()
-        self.__address = address
+        self.__address = tuple(address)
         self.__timeout = timeout
         self.__uid = uuid.uuid1().hex
         self.__context = zmq.Context(1)
-        self.__pushSocket = self.__context.socket(zmq.PUSH)
         self.__ioThread = threading.Thread(target=self.__io)
         self.__ioThread.start()
-        self.__pushSocket.connect("inproc://zmqdrpc-%s"%self.__uid)
         self.__replays = {}
+        self.__threadedSafe = threadedSafe
+        if threadedSafe:
+            self.__tlocal = threading.local()
+        else:
+            class _:pass
+            self.__tlocal = _()
+
+    @property
+    def __pushSocket(self):
+        if hasattr(self.__tlocal, "socket"):
+            return self.__tlocal.socket
+        else:
+            self.__tlocal.socket = self.__context.socket(zmq.PUSH)
+            self.__tlocal.socket.connect("inproc://zmqdrpc-%s"%self.__uid)
+            return self.__tlocal.socket
+
+    @__pushSocket.setter
+    def __pushSocket(self, value):
+        self.__tlocal.socket = value
 
     def __onCall(self, name, args, kwargs):
         #TODO:(cd)make request id short
@@ -165,12 +198,8 @@ class AsyncClient():
                     rep = msg[2]
                     isError = False
                 elif msg[0] == "Exception":
-                    try:
-                        rep = getattr(exceptions, msg[2])(msg[3])
-                        isError = True
-                    except AttributeError:
-                        rep = Exception("exception %s is not found:%s"%(msg[2], msg[3]))
-                        isError = True
+                    rep = RemoteException("{0}--{1}".format(msg[2], msg[3]))
+                    isError = True
                 else:
                     LOGGER.warn("unknow message type: %s"%msg[0])
                     continue

@@ -4,11 +4,13 @@ import uuid
 import threading
 import time
 import logging
+import traceback
+from exceptions import *
 
 LOGGER = logging.getLogger("zmqdrpc-worker")
-LOGGER.setLevel("WARNING")
+LOGGER.setLevel("INFO")
 _ = logging.StreamHandler()
-_.setLevel('WARNING')
+_.setLevel('INFO')
 _.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 LOGGER.addHandler(_)
 
@@ -21,11 +23,12 @@ class RegisterFunctions():
         setattr(self, name, func)
 
 class Worker():
-    def __init__(self, address, identity=None, thread=1, heartbeatInterval=1):
+    def __init__(self, address, identity=None, thread=1, heartbeatInterval=1, exceptionVerbose=False):
         self.exitFlag = threading.Event()
         self.address = address
         self.heartbeatAt = time.time()
         self.heartbeatInterval = heartbeatInterval
+        self.exceptionVerbose = exceptionVerbose
         self.context = zmq.Context(1)
         self.rpcInstance = RegisterFunctions()
         self.threadNum = thread if thread>0 else 1
@@ -90,9 +93,8 @@ class Worker():
                 address, msg = socket.recv_multipart()
                 msg = msgpack.unpackb(msg)
                 if not self.check_msg(msg):
-                    #TODO:(cd)how does async client to deal this backMsg?
-                    backMsg = msgpack.packb(["Exception", '', "Exception", "unknown message format"])
-                    socket.send_multipart([address, '', backMsg])
+                    #this should not happen except internal error of zmqdrpc
+                    LOGGER.warning("receive unknown message from %s"%address)
                     continue
                 msgLen = len(msg)
                 requestId = msg[1]
@@ -103,13 +105,16 @@ class Worker():
                     func = getattr(self.rpcInstance, funcName)
                     result = func(*args, **kwargs)
                 except Exception, err:
-                    backMsg = msgpack.packb(["Exception", requestId, err.__class__.__name__, err.message])
+                    if self.exceptionVerbose:
+                        errMsg = traceback.format_exc()
+                    else:
+                        errMsg = err.message
+                    backMsg = msgpack.packb(["Exception", requestId, err.__class__.__name__, errMsg])
                     socket.send_multipart([address, '', backMsg])
                     continue
                 backMsg = msgpack.packb(["replay", requestId, result])
                 socket.send_multipart([address, '', backMsg])
             if self.exitFlag.isSet():
-                #current used for unittest
                 break
         poller.unregister(socket)
         socket.close()
@@ -121,23 +126,28 @@ class Worker():
             self.heartbeatAt = time.time() + self.heartbeatInterval
 
     def serve_forever(self):
-        while 1:
-            self.check_threads()
-            self.heartbeat()
-            socks = dict(self.poller.poll(self.heartbeatInterval*1000))
-            if socks.get(self.socket) == zmq.POLLIN:
-                frames = self.socket.recv_multipart()
-                if len(frames) == 3:
-                    address, empty, msg = frames
-                    self.workerSocket.send_multipart([self.get_thread(), address, msg])
-            if socks.get(self.workerSocket) == zmq.POLLIN:
-                frames = self.workerSocket.recv_multipart()[1:]
-                self.socket.send_multipart(frames)
-            if self.exitFlag.isSet():
-                #current used for unittest
-                for t in self.threads:
-                    t.join()
-                break
-        self.socket.close()
-        self.workerSocket.close()
-        self.context.term()
+        try:
+            while 1:
+                self.check_threads()
+                self.heartbeat()
+                socks = dict(self.poller.poll(self.heartbeatInterval*1000))
+                if socks.get(self.socket) == zmq.POLLIN:
+                    frames = self.socket.recv_multipart()
+                    if len(frames) == 3:
+                        address, empty, msg = frames
+                        self.workerSocket.send_multipart([self.get_thread(), address, msg])
+                if socks.get(self.workerSocket) == zmq.POLLIN:
+                    frames = self.workerSocket.recv_multipart()[1:]
+                    self.socket.send_multipart(frames)
+                if self.exitFlag.isSet():
+                    for t in self.threads:
+                        t.join()
+                    break
+        except KeyboardInterrupt:
+            LOGGER.info("interrupt reveived, stopping...")
+        finally:
+            self.exitFlag.set()
+            self.socket.close()
+            self.workerSocket.close()
+            time.sleep(2)
+            self.context.term()
