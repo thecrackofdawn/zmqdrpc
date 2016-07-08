@@ -149,5 +149,6 @@ class Worker():
             self.exitFlag.set()
             self.socket.close()
             self.workerSocket.close()
+            #wait dispatch_call to exit
             time.sleep(2)
             self.context.term()
