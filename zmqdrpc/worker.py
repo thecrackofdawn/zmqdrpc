@@ -40,13 +40,14 @@ class Worker():
         self.socket = self.context.socket(zmq.DEALER)
         self.socket.setsockopt(zmq.IDENTITY, self.identity)
         self.socket.connect("tcp://%s:%s"%address)
-        #zmqsocket is not threadsafe
+        #zmqsocket is not threadedsafe
         self.workerSocket = self.context.socket(zmq.ROUTER)
         self.workerSocket.bind("inproc://workers")
         self.poller = zmq.Poller()
         self.poller.register(self.socket, zmq.POLLIN)
         self.poller.register(self.workerSocket, zmq.POLLIN)
         self.tindex = 0
+        self.pingMsg = msgpack.packb(["ping"])
 
 
     def register_function(self, function, name):
@@ -57,8 +58,11 @@ class Worker():
         self.rpcInstance.add_func(function, name)
 
     def register_instance(self, instance):
-        if isinstance(self.rpcInstance, RegisterFunctions) and self.rpcInstance.register_instance:
-            raise Exception("you have already registered functions")
+        if isinstance(self.rpcInstance, RegisterFunctions):
+            if self.rpcInstance.registered_names:
+                raise Exception("you have already registered function")
+        else:
+            raise Exception("you have already registered an instance")
         self.rpcInstance = instance
 
     def check_msg(self, msg):
@@ -117,12 +121,12 @@ class Worker():
             if self.exitFlag.isSet():
                 break
         poller.unregister(socket)
+        socket.setsockopt(zmq.LINGER, 0)
         socket.close()
 
     def heartbeat(self):
         if time.time() >= self.heartbeatAt:
-            msg = msgpack.packb(["ping"])
-            self.socket.send_multipart([msg])
+            self.socket.send_multipart([self.pingMsg])
             self.heartbeatAt = time.time() + self.heartbeatInterval
 
     def serve_forever(self):
@@ -147,7 +151,9 @@ class Worker():
             LOGGER.info("interrupt reveived, stopping...")
         finally:
             self.exitFlag.set()
+            self.socket.setsockopt(zmq.LINGER, 0)
             self.socket.close()
+            self.workerSocket.setsockopt(zmq.LINGER, 0)
             self.workerSocket.close()
             #wait dispatch_call to exit
             time.sleep(2)
