@@ -3,20 +3,20 @@
 ## why another rpc based on zmq
 I search a lot rpc projects and zerorpc seems to be a promising one.I have a web service based on flask, but zerorpc uses gevent heavily.The problem arised when i mixed flask(serve with classic process and thread) with gevent.I don't want to serve with gevent, so i can't use zerorpc :(.I think maybe it is the right time for me to learn zeromq after hearing it a lot.Then i start writing this rpc based on classic process and thread.
 ## features
-* impletmented by classic process and thread(no gevent involved)
+* implemented by classic process and thread(no gevent involved)
 * support sync and async mode
-* make client and worker threaded safe(zeromq itself is not thraded safe)
+* make client and worker threaded safe(zeromq itself is not threaded safe)
 * **distributed**. You can have more then one worker on the remote side and the worker can run on different machines.
 
 ## warning
-Though i use it in my project, i don't think it is production ready. This project is not fully tested and the performance is unknown. You may help to impove this.
+Though i use it in my project, i don't think it is production ready. This project is not fully tested and the performance is unknown. You may help to improve this.
 
 ## archicture
 **The Paranoid Pirate Pattern**(without Retry layer in the client side)
 ![archicture](https://raw.githubusercontent.com/booksbyus/zguide/master/images/fig49.png)   
 (name and picture borrowed from [zeromq](http://zguide.zeromq.org/py:all#Robust-Reliable-Queuing-Paranoid-Pirate-Pattern))
 
-## install 
+## install
 ```sh
 git clone https://github.com/thecrackofdawn/zmqdrpc.git
 cd zmqdrpc
@@ -36,7 +36,7 @@ if __name__ == "__main__":
     broker.serve_forever()
 
 ```    
-we define a broker to accept requsets from clients on port 5555 and dispath those requests to wokers connected to port 5556. The broker will check workers every 1(heartbeatInterval) second and discard workers who don't respond in 5(heartbeatLiveness) seconds. The `heartbeatInterval`should be equal to the one define in worker.  
+we define a broker to accept requests from clients on port 5555 and dispatch those requests to workers connected to port 5556. The broker will check workers every 1(heartbeatInterval) second and discard workers who don't respond in 5(heartbeatLiveness) seconds. The `heartbeatInterval`should be equal to the one define in worker.  
 start the broker `python broker.py`
 ### worker
 ```python
@@ -74,7 +74,7 @@ if __name__ == "__main__":
     worker.serve_forever()
 ```     
 we define a worker connected to the broker's backend. the worker will ping the broker every 1(heartbeatInterval) second and spawn two threads to deal requests.   
-start the worker `pyhton worker.py`
+start the worker `python worker.py`
 
 ### client
 ```python
@@ -89,7 +89,7 @@ def run():
 if __name__ == "__main__":
     run()
 ```
-The client connects to the broker's frontend and calls remote methods. An exception will be raised if the remote methods not return after 20(`timeout`) seconds. If threadedSafe is True, you can share the client over all threads in a process.
+The client connects to the broker's front end and calls remote methods. An exception will be raised if the remote methods not return after 20(`timeout`) seconds. If threadedSafe is True, you can share the client over all threads in a process.
 
 By running `python client.py`, you will get    
 
