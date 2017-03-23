@@ -1,5 +1,9 @@
-from client import Client, AsyncClient
-from broker import Broker
-from worker import Worker
+"""
+repository: https://github.com/thecrackofdawn/zmqdrpc
+"""
 
-__version__ = "0.2"
+from .client import Client, AsyncClient
+from .broker import Broker
+from .worker import Worker
+
+__version__ = "0.3"

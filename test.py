@@ -1,7 +1,25 @@
-import unittest
-import worker, broker, client
+
+
+import contextlib
 import threading
 import time
+import unittest
+
+from zmqdrpc import worker, broker, client
+from zmqdrpc.exceptions import Timeout
+
+
+@contextlib.contextmanager
+def TempTimeout(client_, timeout):
+    """
+    temporary change the timeout for client
+    """
+    orginTimeout = client_._Client__timeout
+    client_._Client__timeout = timeout
+    try:
+        yield
+    finally:
+        client_._Client__timeout = orginTimeout
 
 
 class BasicUsageSync(unittest.TestCase):
@@ -24,12 +42,12 @@ class BasicUsageSync(unittest.TestCase):
         workerThread.start()
         brokerThread = threading.Thread(target=self.broker.serve_forever)
         brokerThread.start()
-        sendMsg = "hiii"
-        msg = client_.echo(sendMsg)
-        self.assertEqual(msg, sendMsg)
+        send_msg = "hiii"
+        msg = client_.echo(send_msg)
+        self.assertEqual(msg, send_msg)
         #kwargs
-        msg = client_.echo(msg=sendMsg)
-        self.assertEqual(msg, sendMsg)
+        msg = client_.echo(msg=send_msg)
+        self.assertEqual(msg, send_msg)
 
     def test_two2w1t2(self):
         def curThread():
@@ -77,10 +95,10 @@ class BasicUsageSync(unittest.TestCase):
         brokerThread = threading.Thread(target=self.broker.serve_forever)
         brokerThread.start()
         client_ = client.Client(("127.0.0.1", 5555), timeout=1)
-        with self.assertRaises(Exception) as cm:
+        with self.assertRaises(Timeout) as cm:
             client_.timeout(2)
-        self.assertEqual(cm.exception.message, "timeout")
-        with client.Timeout(client_, 5):
+
+        with TempTimeout(client_, 5):
             self.assertEqual(client_.echo("hii"), "hii")
         time.sleep(2)
 
@@ -90,7 +108,7 @@ class BasicUsageSync(unittest.TestCase):
 
     def tearDown(self):
         while self.clean:
-            self.clean.pop().exitFlag.set()
+            self.clean.pop().exit_flag.set()
         time.sleep(2)
 
 class BasicUsageAsync(unittest.TestCase):
@@ -101,24 +119,52 @@ class BasicUsageAsync(unittest.TestCase):
         def echo(msg):
             return msg
         self.worker = worker.Worker(("127.0.0.1", 5556), "id1")
-        self.clean.append(self.worker.exitFlag)
+        self.clean.append(self.worker.exit_flag)
         self.worker.daemon = True
         self.broker = broker.Broker()
-        self.clean.append(self.broker.exitFlag)
+        self.clean.append(self.broker.exit_flag)
         self.broker.daemon = True
         client_ = client.AsyncClient(("127.0.0.1", 5555), timeout=5)
-        self.clean.append(client_._AsyncClient__exitFlag)
+        self.clean.append(client_._AsyncClient__exit_flag)
         self.worker.register_function(echo, "echo")
         workerThread = threading.Thread(target=self.worker.serve_forever)
         workerThread.start()
         brokerThread = threading.Thread(target=self.broker.serve_forever)
         brokerThread.start()
-        sendMsg = "hiii"
-        msg = client_.echo(sendMsg).get()
-        self.assertEqual(msg, sendMsg)
+        send_msg = "hiii"
+        msg = client_.echo(send_msg).get()
+        self.assertEqual(msg, send_msg)
         #kwargs
-        msg = client_.echo(msg=sendMsg).get()
-        self.assertEqual(msg, sendMsg)
+        msg = client_.echo(msg=send_msg).get()
+        self.assertEqual(msg, send_msg)
+
+    def test_timeout(self):
+        def timeout(sec):
+            time.sleep(sec)
+        def echo(msg):
+            return msg
+        self.worker = worker.Worker(("127.0.0.1", 5556), thread=2)
+        self.clean.append(self.worker.exit_flag)
+        self.worker.daemon = True
+        self.broker = broker.Broker()
+        self.clean.append(self.broker.exit_flag)
+        self.broker.daemon = True
+        self.worker.register_function(timeout, "timeout")
+        self.worker.register_function(echo, "echo")
+        workerThread = threading.Thread(target=self.worker.serve_forever)
+        workerThread.start()
+        brokerThread = threading.Thread(target=self.broker.serve_forever)
+        brokerThread.start()
+        client_ = client.AsyncClient(("127.0.0.1", 5555), timeout=1)
+        self.clean.append(client_._AsyncClient__exit_flag)
+
+        with self.assertRaises(Timeout) as cm:
+            client_.timeout(2).get()
+
+        with TempTimeout(client_, 5):
+            self.assertEqual(client_.echo("hii").get(), "hii")
+
+        time.sleep(2)
 
     def tearDown(self):
         while self.clean:
@@ -131,5 +177,6 @@ if __name__ == "__main__":
     suite.addTest(BasicUsageSync("test_two2w1t2"))
     suite.addTest(BasicUsageSync("test_timeout"))
     suite.addTest(BasicUsageAsync("test_one2w1t1"))
-    runner = unittest.TextTestRunner()
+    suite.addTest(BasicUsageAsync("test_timeout"))
+    runner = unittest.TextTestRunner(failfast=True)
     runner.run(suite)
