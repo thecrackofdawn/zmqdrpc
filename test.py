@@ -8,6 +8,10 @@ import unittest
 from zmqdrpc import worker, broker, client
 from zmqdrpc.exceptions import Timeout
 
+worker.LOGGER.setLevel("ERROR")
+broker.LOGGER.setLevel("ERROR")
+client.LOGGER.setLevel("ERROR")
+
 
 @contextlib.contextmanager
 def TempTimeout(client_, timeout):
@@ -21,6 +25,36 @@ def TempTimeout(client_, timeout):
     finally:
         client_._Client__timeout = orginTimeout
 
+
+class IdleFirstBalancer(unittest.TestCase):
+    def setUp(self):
+        self.heartbeat = 1
+        self.liveness = 5
+        self.balancer = broker.IdleFirst(self.heartbeat, self.liveness)
+
+    def test_get(self):
+        self.balancer.update(b"worker1", b"ping")
+        self.balancer.update(b"worker2", b"ping")
+        self.balancer.update(b"worker3", b"ping")
+        self.assertEqual(self.balancer.get(), b"worker1")
+        self.assertEqual(self.balancer.get(), b"worker2")
+        self.assertEqual(self.balancer.get(), b"worker3")
+        self.assertEqual(self.balancer.get(), b"worker1")
+        self.balancer.update(b'worker3', b"replay")
+        self.balancer.update(b'worker3', b"replay")
+        self.assertEqual(self.balancer.get(), b"worker3")
+
+    def test_check(self):
+        self.balancer.update(b"worker1", b"ping")
+        self.balancer.update(b"worker2", b"ping")
+        self.balancer.update(b"worker3", b"ping")
+        for i in range(self.liveness+1):
+            self.balancer.check()
+            self.balancer.check_at = 0
+            self.balancer.update(b"worker2", b"ping")
+        self.balancer.check()
+        self.assertEqual(len(self.balancer.pool), 1)
+        self.assertIn(b"worker2", self.balancer.pool)
 
 class BasicUsageSync(unittest.TestCase):
     def setUp(self):
@@ -173,6 +207,8 @@ class BasicUsageAsync(unittest.TestCase):
 
 if __name__ == "__main__":
     suite = unittest.TestSuite()
+    suite.addTest(IdleFirstBalancer("test_get"))
+    suite.addTest(IdleFirstBalancer("test_check"))
     suite.addTest(BasicUsageSync("test_one2w1t1"))
     suite.addTest(BasicUsageSync("test_two2w1t2"))
     suite.addTest(BasicUsageSync("test_timeout"))

@@ -54,8 +54,6 @@ class Worker():
         self.poller.register(self.socket, zmq.POLLIN)
         self.poller.register(self.worker_socket, zmq.POLLIN)
         self.tindex = 0
-        self.ping_msg = msgpack.packb("ping", encoding="utf-8")
-
 
     def register_function(self, function, name):
         if not isinstance(self.rpc_instance, RegisterFunctions):
@@ -122,7 +120,7 @@ class Worker():
                         else:
                             #encode for python3
                             err_msg = repr(err).encode('utf-8')
-                        back_msg = msgpack.packb([b"Exception", request_id, err_msg], encoding="utf-8")
+                        back_msg = msgpack.packb([b"exception", request_id, err_msg], encoding="utf-8")
                         socket.send_multipart([address, b'', back_msg])
                         continue
                     back_msg = msgpack.packb([b"replay", request_id, result], encoding="utf-8")
@@ -138,7 +136,7 @@ class Worker():
 
     def heartbeating(self):
         if time.time() >= self.heartbeat_at:
-            self.socket.send_multipart([self.ping_msg])
+            self.socket.send_multipart([b'ping'])
             self.heartbeat_at = time.time() + self.heartbeat
 
     def serve_forever(self):

@@ -117,7 +117,7 @@ class Client(object):
                 raise UnknownFormat("unknow format")
             if msg[0] == "replay":
                 return msg[2]
-            elif msg[0] == "Exception":
+            elif msg[0] == "exception":
                 raise RemoteException("{0}".format(msg[2]))
             else:
                 raise UnknownMessageType("unknow message type")
