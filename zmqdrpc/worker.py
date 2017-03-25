@@ -121,10 +121,10 @@ class Worker():
                             #encode for python3
                             err_msg = repr(err).encode('utf-8')
                         back_msg = msgpack.packb([b"exception", request_id, err_msg], encoding="utf-8")
-                        socket.send_multipart([address, b'', back_msg])
+                        socket.send_multipart([b'exception', address, b'', back_msg])
                         continue
                     back_msg = msgpack.packb([b"replay", request_id, result], encoding="utf-8")
-                    socket.send_multipart([address, b'', back_msg])
+                    socket.send_multipart([b'replay', address, b'', back_msg])
                 if self.exit_flag.isSet():
                     break
         except:

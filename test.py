@@ -6,7 +6,7 @@ import time
 import unittest
 
 from zmqdrpc import worker, broker, client
-from zmqdrpc.exceptions import Timeout
+from zmqdrpc.exceptions import Timeout, RemoteException
 
 worker.LOGGER.setLevel("ERROR")
 broker.LOGGER.setLevel("ERROR")
@@ -111,6 +111,24 @@ class BasicUsageSync(unittest.TestCase):
         t2.join()
         self.assertNotEqual(self.msg1, self.msg2)
 
+    def test_exception(self):
+        def divide(a, b):
+            return a/b
+        self.worker = worker.Worker(("127.0.0.1", 5556), thread=2)
+        self.clean.append(self.worker)
+        self.worker.daemon = True
+        self.broker = broker.Broker()
+        self.clean.append(self.broker)
+        self.broker.daemon = True
+        self.worker.register_function(divide, "divide")
+        workerThread = threading.Thread(target=self.worker.serve_forever)
+        workerThread.start()
+        brokerThread = threading.Thread(target=self.broker.serve_forever)
+        brokerThread.start()
+        client_ = client.Client(("127.0.0.1", 5555), timeout=1)
+        with self.assertRaises(RemoteException) as cm:
+            client_.divide(1, 0)
+
     def test_timeout(self):
         def timeout(sec):
             time.sleep(sec)
@@ -212,6 +230,7 @@ if __name__ == "__main__":
     suite.addTest(BasicUsageSync("test_one2w1t1"))
     suite.addTest(BasicUsageSync("test_two2w1t2"))
     suite.addTest(BasicUsageSync("test_timeout"))
+    suite.addTest(BasicUsageSync("test_exception"))
     suite.addTest(BasicUsageAsync("test_one2w1t1"))
     suite.addTest(BasicUsageAsync("test_timeout"))
     runner = unittest.TextTestRunner(failfast=True)

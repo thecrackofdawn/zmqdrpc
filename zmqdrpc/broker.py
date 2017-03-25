@@ -102,7 +102,7 @@ class IdleFirst(Balancer):
     def __init__(self, heartbeat, liveness):
         super(IdleFirst, self).__init__(heartbeat, liveness)
         self.pool = {}
-        self.check_at = 0
+        self.check_at = time.time()
 
     def get(self):
         if not self.is_empty():
@@ -167,12 +167,14 @@ class Broker():
                 socks = dict(self.apoller.poll(self.heartbeat*1000))
             if socks.get(self.backend) == zmq.POLLIN:
                 frames = self.backend.recv_multipart()
+                #[worker, action]
                 if len(frames) == 2:
                     worker, action = frames
                     self.worker_queue.update(worker, action)
-                elif len(frames) > 2:
+                #[worker, aciton, client, '', msg]
+                elif len(frames) == 5:
                     self.worker_queue.update(frames[0], frames[1])
-                    msg = frames[1:]
+                    msg = frames[2:]
                     self.frontend.send_multipart(msg)
             if socks.get(self.frontend) == zmq.POLLIN:
                 msg = self.frontend.recv_multipart()
