@@ -218,6 +218,25 @@ class BasicUsageAsync(unittest.TestCase):
 
         time.sleep(2)
 
+    def test_exception(self):
+        def divide(a, b):
+            return a/b
+        self.worker = worker.Worker(("127.0.0.1", 5556), thread=2)
+        self.clean.append(self.worker.exit_flag)
+        self.worker.daemon = True
+        self.broker = broker.Broker()
+        self.clean.append(self.broker.exit_flag)
+        self.broker.daemon = True
+        self.worker.register_function(divide, "divide")
+        workerThread = threading.Thread(target=self.worker.serve_forever)
+        workerThread.start()
+        brokerThread = threading.Thread(target=self.broker.serve_forever)
+        brokerThread.start()
+        client_ = client.AsyncClient(("127.0.0.1", 5555), timeout=10)
+        with self.assertRaises(RemoteException) as cm:
+            client_.divide(1, 0).get()
+
+
     def tearDown(self):
         while self.clean:
             self.clean.pop().set()
@@ -233,5 +252,6 @@ if __name__ == "__main__":
     suite.addTest(BasicUsageSync("test_exception"))
     suite.addTest(BasicUsageAsync("test_one2w1t1"))
     suite.addTest(BasicUsageAsync("test_timeout"))
+    suite.addTest(BasicUsageAsync("test_exception"))
     runner = unittest.TextTestRunner(failfast=True)
     runner.run(suite)

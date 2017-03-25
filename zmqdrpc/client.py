@@ -202,7 +202,7 @@ class AsyncClient(object):
                 if msg[0] == "replay":
                     rep = msg[2]
                     is_error = False
-                elif msg[0] == "Exception":
+                elif msg[0] == "exception":
                     rep = RemoteException("{0}".format(msg[2]))
                     is_error = True
                 else:
