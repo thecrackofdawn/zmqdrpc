@@ -5,8 +5,8 @@ import threading
 import time
 import uuid
 
-import zmq
 import msgpack
+import zmq
 
 from .exceptions import Timeout, UnknownFormat, RemoteException, UnknownMessageType
 

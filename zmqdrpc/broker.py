@@ -36,6 +36,9 @@ class Balancer(object):
     def is_empty(self):
         raise NotImplementedError()
 
+    def status(self):
+        pass
+
 class RoundRobin(Balancer):
     def __init__(self, heartbeat, liveness):
         self.pool = defaultdict(dict)
@@ -98,6 +101,13 @@ class RoundRobin(Balancer):
         else:
             return True
 
+    def status(self):
+        status = {}
+        status['workers'] = self.pool
+        status['liveness'] = self.liveness
+        status['heartbeat'] = self.heartbeat
+        return status
+
 class IdleFirst(Balancer):
     def __init__(self, heartbeat, liveness):
         super(IdleFirst, self).__init__(heartbeat, liveness)
@@ -140,48 +150,73 @@ class IdleFirst(Balancer):
     def is_empty(self):
         return not bool(self.pool)
 
+    def status(self):
+        status = {}
+        status['workers'] = self.pool
+        status['liveness'] = self.liveness
+        status['heartbeat'] = self.heartbeat
+        return status
+
 class Broker():
     def __init__(self, frontend=("127.0.0.1", 5555), backend=("127.0.0.1", 5556),
-        heartbeat=1, liveness=5, balancer=RoundRobin):
+        heartbeat=1, liveness=5, balancer=RoundRobin, manager=("127.0.0.1", 5557)):
         self.exit_flag = threading.Event()
         self.context = zmq.Context(1)
         self.frontend = self.context.socket(zmq.ROUTER)
         self.backend = self.context.socket(zmq.ROUTER)
+        self.manager = self.context.socket(zmq.REP)
         self.frontend.bind("tcp://%s:%s"%frontend)
         self.backend.bind("tcp://%s:%s"%backend)
+        self.manager.bind("tcp://%s:%s"%manager)
+
         self.apoller = zmq.Poller()
         self.bpoller = zmq.Poller()
         self.apoller.register(self.frontend, zmq.POLLIN)
         self.apoller.register(self.backend, zmq.POLLIN)
+        self.apoller.register(self.manager, zmq.POLLIN)
+        self.bpoller.register(self.manager, zmq.POLLIN)
         self.bpoller.register(self.backend, zmq.POLLIN)
         self.heartbeat = heartbeat
-        self.worker_queue = balancer(heartbeat, liveness)
+        self.balancer = balancer(heartbeat, liveness)
 
     def serve_forever(self):
         LOGGER.info("start serving...")
-        while 1:
-            self.worker_queue.check()
-            if self.worker_queue.is_empty():
-                socks = dict(self.bpoller.poll())
-            else:
-                socks = dict(self.apoller.poll(self.heartbeat*1000))
-            if socks.get(self.backend) == zmq.POLLIN:
-                frames = self.backend.recv_multipart()
-                #[worker, action]
-                if len(frames) == 2:
-                    worker, action = frames
-                    self.worker_queue.update(worker, action)
-                #[worker, aciton, client, '', msg]
-                elif len(frames) == 5:
-                    self.worker_queue.update(frames[0], frames[1])
-                    msg = frames[2:]
-                    self.frontend.send_multipart(msg)
-            if socks.get(self.frontend) == zmq.POLLIN:
-                msg = self.frontend.recv_multipart()
-                worker = self.worker_queue.get()
-                self.backend.send_multipart([worker] + msg)
-            if self.exit_flag.isSet():
-                break
-        self.frontend.close()
-        self.backend.close()
-        self.context.term()
+        try:
+            while 1:
+                self.balancer.check()
+                #wait until there are works available
+                if self.balancer.is_empty():
+                    socks = dict(self.bpoller.poll())
+                else:
+                    socks = dict(self.apoller.poll(self.heartbeat*1000))
+                if socks.get(self.backend) == zmq.POLLIN:
+                    frames = self.backend.recv_multipart()
+                    #[worker, action]
+                    if len(frames) == 2:
+                        worker, action = frames
+                        self.balancer.update(worker, action)
+                    #[worker, aciton, client, '', msg]
+                    elif len(frames) == 5:
+                        self.balancer.update(frames[0], frames[1])
+                        msg = frames[2:]
+                        self.frontend.send_multipart(msg)
+                if socks.get(self.frontend) == zmq.POLLIN:
+                    msg = self.frontend.recv_multipart()
+                    worker = self.balancer.get()
+                    self.backend.send_multipart([worker] + msg)
+                if socks.get(self.manager) == zmq.POLLIN:
+                    #[action]
+                    msg = self.manager.recv_multipart()
+                    if msg[0] == b"status":
+                        rep = msgpack.packb(self.balancer.status(), encoding="utf-8")
+                        self.manager.send_multipart([rep])
+                if self.exit_flag.isSet():
+                    break
+        finally:
+            self.frontend.setsockopt(zmq.LINGER, 0)
+            self.backend.setsockopt(zmq.LINGER, 0)
+            self.manager.setsockopt(zmq.LINGER, 0)
+            self.frontend.close()
+            self.backend.close()
+            self.manager.close()
+            self.context.term()
