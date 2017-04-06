@@ -122,13 +122,14 @@ class Worker():
                             err_msg = repr(err).encode('utf-8')
                         back_msg = msgpack.packb([b"exception", request_id, err_msg], encoding="utf-8")
                         socket.send_multipart([b'exception', address, b'', back_msg])
-                        continue
-                    back_msg = msgpack.packb([b"replay", request_id, result], encoding="utf-8")
-                    socket.send_multipart([b'replay', address, b'', back_msg])
+                    else:
+                        back_msg = msgpack.packb([b"replay", request_id, result], encoding="utf-8")
+                        socket.send_multipart([b'replay', address, b'', back_msg])
                 if self.exit_flag.isSet():
                     break
         except:
             LOGGER.error(traceback.format_exc())
+            self.exit_flag.set()
         finally:
             poller.unregister(socket)
             socket.setsockopt(zmq.LINGER, 0)
@@ -159,7 +160,7 @@ class Worker():
                         t.join()
                     break
         except KeyboardInterrupt:
-            LOGGER.info("interrupt reveived, stopping...")
+            LOGGER.info("interrupt received, stopping...")
         finally:
             self.exit_flag.set()
             self.socket.setsockopt(zmq.LINGER, 0)

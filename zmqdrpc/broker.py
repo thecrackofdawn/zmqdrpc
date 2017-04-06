@@ -131,7 +131,10 @@ class IdleFirst(Balancer):
                 LOGGER.info("register worker %s", worker)
                 self.pool[worker] = [0, 0, 0]#pendingTasks, lastUsedAt, missingHeartbeat
         elif (action == b'replay' or action == b'exception') and worker in self.pool:
-            self.pool[worker][0] -= 1
+            #TODO:(cd)once worker reconnect after timeout, the response it holds back will make the pendingTasks minus
+            #lets fix it in a Q&D way for now by not allowed pendingTasks to be minus
+            if self.pool[worker][0] > 0:
+                self.pool[worker][0] -= 1
 
     def check(self):
         if not (time.time() >= self.check_at):

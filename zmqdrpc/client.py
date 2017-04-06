@@ -185,37 +185,44 @@ class AsyncClient(object):
         self.__poller = zmq.Poller()
         self.__poller.register(self.__pull_socket, zmq.POLLIN)
         self.__poller.register(self.__socket, zmq.POLLIN)
-        while 1:
-            socks = dict(self.__poller.poll(1000))
-            if socks.get(self.__pull_socket) == zmq.POLLIN:
-                frames = self.__pull_socket.recv_multipart()
-                #add an empty frame to behave like REQ
-                self.__socket.send_multipart([b''] + frames)
-            if socks.get(self.__socket) == zmq.POLLIN:
-                #skip the empty frame
-                frames = self.__socket.recv_multipart()[1:]
-                if len(frames) == 1:
-                    msg = msgpack.unpackb(frames[0], encoding="utf-8")
-                else:
-                    LOGGER.warn("recv unknown format message")
-                    continue
-                if msg[0] == "replay":
-                    rep = msg[2]
-                    is_error = False
-                elif msg[0] == "exception":
-                    rep = RemoteException("{0}".format(msg[2]))
-                    is_error = True
-                else:
-                    LOGGER.warn("unknow message type: %s", msg[0])
-                    continue
-                request_id = msg[1]
-                if request_id in self.__replays:
-                    self.__replays[request_id]._Replay__set(rep, is_error)
-                    self.__replays.pop(request_id)
-            now = time.time()
-            self.__replays = dict((item for item in self.__replays.items() if now < item[1].timeout_at))
-            if self.__exit_flag.isSet():
-                break
+        try:
+            while 1:
+                socks = dict(self.__poller.poll(1000))
+                if socks.get(self.__pull_socket) == zmq.POLLIN:
+                    frames = self.__pull_socket.recv_multipart()
+                    #add an empty frame to behave like REQ
+                    self.__socket.send_multipart([b''] + frames)
+                if socks.get(self.__socket) == zmq.POLLIN:
+                    #skip the empty frame
+                    frames = self.__socket.recv_multipart()[1:]
+                    if len(frames) == 1:
+                        msg = msgpack.unpackb(frames[0], encoding="utf-8")
+                    else:
+                        LOGGER.warn("recv unknown format message")
+                        continue
+                    if msg[0] == "replay":
+                        rep = msg[2]
+                        is_error = False
+                    elif msg[0] == "exception":
+                        rep = RemoteException("{0}".format(msg[2]))
+                        is_error = True
+                    else:
+                        LOGGER.warn("unknow message type: %s", msg[0])
+                        continue
+                    request_id = msg[1]
+                    if request_id in self.__replays:
+                        self.__replays[request_id]._Replay__set(rep, is_error)
+                        self.__replays.pop(request_id)
+                now = time.time()
+                self.__replays = dict((item for item in self.__replays.items() if now < item[1].timeout_at))
+                if self.__exit_flag.isSet():
+                    break
+        finally:
+            self.__pull_socket.setsockopt(zmq.LINGER, 0)
+            self.__socket.setsockopt(zmq.LINGER, 0)
+            self.__pull_socket.close()
+            self.__socket.close()
+            self.__context.term()
 
     def __getattr__(self, name):
         return Call(name, self)
